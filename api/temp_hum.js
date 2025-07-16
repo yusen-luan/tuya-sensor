@@ -146,10 +146,9 @@ export default async function handler(req, res) {
         // Send the extracted data back as a JSON response
         res.status(200).json({
             deviceId: DEVICE_ID,
-            temperature: temperature / 10, // Tuya often returns temperature multiplied by 10
+            temperature: Math.floor(temperature / 10), // Tuya often returns temperature multiplied by 10
             humidity: humidity,
             unit: 'celsius', // Assuming Celsius, adjust if your sensor uses Fahrenheit
-            fullTuyaResponse: data // Optional: include full response for debugging
         });
 
     } catch (error) {
