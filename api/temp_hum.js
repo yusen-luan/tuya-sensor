@@ -11,7 +11,7 @@ import crypto from 'crypto';
 // IMPORTANT: Replace these with your actual Tuya IoT Platform credentials.
 // It's highly recommended to use environment variables for these in a real
 // Vercel deployment (e.g., process.env.TUYA_ACCESS_ID).
-const TUYA_ACCESS_ID = process.env.CLIENT_ID; // Your Tuya Cloud Project Access ID, from your curl command
+const TUYA_ACCESS_ID = process.env.CLIENT_KEY; // Your Tuya Cloud Project Access ID, from your curl command
 const TUYA_ACCESS_SECRET = process.env.CLIENT_SECRET; // Your Tuya Cloud Project Access Secret
 const TUYA_API_ENDPOINT = 'https://openapi.tuyaus.com'; // Or your specific region endpoint (e.g., openapi.tuyaeu.com, openapi.tuyain.com)
 const DEVICE_ID = process.env.DEVICE_ID; // The ID of your temperature/humidity sensor device
