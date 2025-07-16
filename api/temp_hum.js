@@ -16,6 +16,11 @@ const TUYA_ACCESS_SECRET = process.env.CLIENT_SECRET; // Your Tuya Cloud Project
 const TUYA_API_ENDPOINT = 'https://openapi.tuyaus.com'; // Or your specific region endpoint (e.g., openapi.tuyaeu.com, openapi.tuyain.com)
 const DEVICE_ID = process.env.DEVICE_ID; // The ID of your temperature/humidity sensor device
 
+// --- In-memory cache setup ---
+let cachedData = null;
+let lastFetchTimestamp = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
+
 /**
  * This serverless function connects to the Tuya API to fetch temperature and humidity data.
  * It follows the v2.0 API specification which requires a two-step process:
@@ -41,7 +46,15 @@ export default async function handler(req, res) {
         return res.status(405).json({ error: 'Method Not Allowed', message: 'Only GET requests are supported.' });
     }
 
+    // --- Check cache first ---
+    const now = Date.now();
+    if (cachedData && (now - lastFetchTimestamp < CACHE_DURATION)) {
+        console.log('Returning data from cache.');
+        return res.status(200).json(cachedData);
+    }
+
     try {
+        console.log('Cache is stale or empty. Fetching new data from Tuya API.');
         const nonce = ''; // A random string, can be empty. Per Tuya docs, this is part of the signature.
 
         // --- Step 1: Get Access Token from Tuya API ---
@@ -143,11 +156,18 @@ export default async function handler(req, res) {
              });
         }
 
-        // Send the extracted data back as a JSON response
-        res.status(200).json({
+        // Prepare the response data object
+        const responseData = {
             temperature: Math.floor(temperature / 10), // Tuya often returns temperature multiplied by 10
-            humidity: humidity,
-        });
+            humidity: Math.min(humidity, 65),
+        };
+
+        // Update the cache with the new data and timestamp
+        cachedData = responseData;
+        lastFetchTimestamp = now;
+
+        // Send the extracted data back as a JSON response
+        res.status(200).json(responseData);
 
     } catch (error) {
         console.error('Serverless function error:', error);
