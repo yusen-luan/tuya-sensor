@@ -42,24 +42,34 @@ export default async function handler(req, res) {
     }
 
     try {
+        const nonce = ''; // A random string, can be empty. Per Tuya docs, this is part of the signature.
+
         // --- Step 1: Get Access Token from Tuya API ---
         const tokenTimestamp = Date.now().toString();
         const tokenPath = '/v1.0/token?grant_type=1';
-        // String to sign for token request: client_id + timestamp
-        const stringToSignForToken = TUYA_ACCESS_ID + tokenTimestamp;
+        const tokenMethod = 'GET';
+        const tokenBody = '';
+        const tokenContentHash = crypto.createHash('sha256').update(tokenBody).digest('hex');
+        
+        // As per Tuya Docs: stringToSign = HTTPMethod + "\n" + Content-SHA256 + "\n" + Headers + "\n" + URL
+        const stringToSignForToken = `${tokenMethod}\n${tokenContentHash}\n\n${tokenPath}`;
+        // As per Tuya Docs: str = client_id + t + nonce + stringToSign
+        const stringToHmacForToken = TUYA_ACCESS_ID + tokenTimestamp + nonce + stringToSignForToken;
+
         const tokenSign = crypto.createHmac('sha256', TUYA_ACCESS_SECRET)
-            .update(stringToSignForToken, 'utf8')
+            .update(stringToHmacForToken, 'utf8')
             .digest('hex')
             .toUpperCase();
 
         const tokenUrl = `${TUYA_API_ENDPOINT}${tokenPath}`;
         const tokenResponse = await fetch(tokenUrl, {
-            method: 'GET',
+            method: tokenMethod,
             headers: {
                 'client_id': TUYA_ACCESS_ID,
                 'sign': tokenSign,
                 'sign_method': 'HMAC-SHA256',
                 't': tokenTimestamp,
+                'nonce': nonce,
                 'Content-Type': 'application/json',
             },
         });
@@ -84,8 +94,8 @@ export default async function handler(req, res) {
         
         // String to sign for API request: HTTPMethod\nContent-SHA256\nHeaders\nURL
         const stringToSignForApiRequest = `${method}\n${contentHash}\n\n${apiPath}`;
-        // The final string to be encrypted: client_id + access_token + timestamp + stringToSign
-        const stringToHmac = TUYA_ACCESS_ID + accessToken + apiTimestamp + stringToSignForApiRequest;
+        // The final string to be encrypted: client_id + access_token + timestamp + nonce + stringToSign
+        const stringToHmac = TUYA_ACCESS_ID + accessToken + apiTimestamp + nonce + stringToSignForApiRequest;
 
         const apiSign = crypto.createHmac('sha256', TUYA_ACCESS_SECRET)
             .update(stringToHmac, 'utf8')
@@ -103,6 +113,7 @@ export default async function handler(req, res) {
                 'sign': apiSign,
                 'sign_method': 'HMAC-SHA256', // Specify the signing method
                 't': apiTimestamp, // Timestamp
+                'nonce': nonce,
                 'Content-Type': 'application/json',
             },
         });
