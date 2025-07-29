@@ -14,7 +14,8 @@ import crypto from 'crypto';
 const TUYA_ACCESS_ID = process.env.CLIENT_KEY; // Your Tuya Cloud Project Access ID, from your curl command
 const TUYA_ACCESS_SECRET = process.env.CLIENT_SECRET; // Your Tuya Cloud Project Access Secret
 const TUYA_API_ENDPOINT = 'https://openapi.tuyaus.com'; // Or your specific region endpoint (e.g., openapi.tuyaeu.com, openapi.tuyain.com)
-const DEVICE_ID = process.env.DEVICE_ID; // The ID of your temperature/humidity sensor device
+const DEVICE_ID = process.env.DEVICE_ID; // The ID of your first temperature/humidity sensor device
+const DEVICE_ID_2 = process.env.WINE_DEVICE_ID; // The ID of your second temperature/humidity sensor device
 
 // --- In-memory cache setup ---
 let cachedData = null;
@@ -98,68 +99,97 @@ export default async function handler(req, res) {
         const accessToken = tokenData.result.access_token;
 
 
-        // --- Step 2: Get Device Shadow Properties using the Access Token ---
+        // --- Step 2: Get Device Shadow Properties for both devices using the Access Token ---
         const apiTimestamp = Date.now().toString();
-        const apiPath = `/v2.0/cloud/thing/${DEVICE_ID}/shadow/properties`;
-        const method = 'GET';
-        const body = ''; // GET requests have no body
-        const contentHash = crypto.createHash('sha256').update(body).digest('hex');
         
-        // String to sign for API request: HTTPMethod\nContent-SHA256\nHeaders\nURL
-        const stringToSignForApiRequest = `${method}\n${contentHash}\n\n${apiPath}`;
-        // The final string to be encrypted: client_id + access_token + timestamp + nonce + stringToSign
-        const stringToHmac = TUYA_ACCESS_ID + accessToken + apiTimestamp + nonce + stringToSignForApiRequest;
+        // Helper function to fetch device data
+        const fetchDeviceData = async (deviceId) => {
+            const apiPath = `/v2.0/cloud/thing/${deviceId}/shadow/properties`;
+            const method = 'GET';
+            const body = ''; // GET requests have no body
+            const contentHash = crypto.createHash('sha256').update(body).digest('hex');
+            
+            // String to sign for API request: HTTPMethod\nContent-SHA256\nHeaders\nURL
+            const stringToSignForApiRequest = `${method}\n${contentHash}\n\n${apiPath}`;
+            // The final string to be encrypted: client_id + access_token + timestamp + nonce + stringToSign
+            const stringToHmac = TUYA_ACCESS_ID + accessToken + apiTimestamp + nonce + stringToSignForApiRequest;
 
-        const apiSign = crypto.createHmac('sha256', TUYA_ACCESS_SECRET)
-            .update(stringToHmac, 'utf8')
-            .digest('hex')
-            .toUpperCase();
+            const apiSign = crypto.createHmac('sha256', TUYA_ACCESS_SECRET)
+                .update(stringToHmac, 'utf8')
+                .digest('hex')
+                .toUpperCase();
 
-        const url = `${TUYA_API_ENDPOINT}${apiPath}`;
+            const url = `${TUYA_API_ENDPOINT}${apiPath}`;
 
-        // Make the API request to Tuya
-        const response = await fetch(url, {
-            method: method,
-            headers: {
-                'client_id': TUYA_ACCESS_ID,
-                'access_token': accessToken,
-                'sign': apiSign,
-                'sign_method': 'HMAC-SHA256', // Specify the signing method
-                't': apiTimestamp, // Timestamp
-                'nonce': nonce,
-                'Content-Type': 'application/json',
-            },
-        });
-
-        // Check if the response was successful
-        const data = await response.json();
-        if (!response.ok || !data.success) {
-            console.error('Tuya API Error:', data);
-            return res.status(response.status).json({
-                error: 'Failed to fetch data from Tuya API',
-                details: data,
+            // Make the API request to Tuya
+            const response = await fetch(url, {
+                method: method,
+                headers: {
+                    'client_id': TUYA_ACCESS_ID,
+                    'access_token': accessToken,
+                    'sign': apiSign,
+                    'sign_method': 'HMAC-SHA256',
+                    't': apiTimestamp,
+                    'nonce': nonce,
+                    'Content-Type': 'application/json',
+                },
             });
-        }
 
-        // Extract temperature and humidity from the v2.0 API response.
-        // The response contains a `properties` array.
-        // You might need to inspect the 'data' object to find the correct `code` values.
-        const properties = data.result?.properties;
-        const temperature = properties?.find(s => s.code === 'temp_current' || s.code === 'va_temperature')?.value;
-        const humidity = properties?.find(s => s.code === 'humidity_value' || s.code === 'va_humidity')?.value;
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                throw new Error(`Failed to fetch data for device ${deviceId}: ${JSON.stringify(data)}`);
+            }
 
-        if (temperature === undefined || humidity === undefined) {
-             console.warn('Temperature or humidity data not found in Tuya response:', data);
-             return res.status(404).json({
-                 message: 'Temperature or humidity data not found for this device. Check device status codes.',
-                 fullResponse: data
-             });
+            return data;
+        };
+
+        // Fetch data from both devices in parallel
+        const [device1Data, device2Data] = await Promise.all([
+            fetchDeviceData(DEVICE_ID),
+            fetchDeviceData(DEVICE_ID_2)
+        ]);
+
+        // Helper function to extract temperature and humidity from device data
+        const extractSensorData = (data, deviceId) => {
+            const properties = data.result?.properties;
+            const temperature = properties?.find(s => s.code === 'temp_current' || s.code === 'va_temperature')?.value;
+            const humidity = properties?.find(s => s.code === 'humidity_value' || s.code === 'va_humidity')?.value;
+
+            if (temperature === undefined || humidity === undefined) {
+                console.warn(`Temperature or humidity data not found for device ${deviceId}:`, data);
+                return null;
+            }
+
+            return {
+                temperature: Math.floor(temperature / 10), // Tuya often returns temperature multiplied by 10
+                humidity: Math.min(humidity, 65),
+            };
+        };
+
+        // Extract sensor data for both devices
+        const device1SensorData = extractSensorData(device1Data, DEVICE_ID);
+        const device2SensorData = extractSensorData(device2Data, DEVICE_ID_2);
+
+        // Check if we got data from both devices
+        if (!device1SensorData || !device2SensorData) {
+            return res.status(404).json({
+                message: 'Temperature or humidity data not found for one or both devices. Check device status codes.',
+                device1Data: device1SensorData,
+                device2Data: device2SensorData,
+                fullResponse: { device1: device1Data, device2: device2Data }
+            });
         }
 
         // Prepare the response data object
         const responseData = {
-            temperature: Math.floor(temperature / 10), // Tuya often returns temperature multiplied by 10
-            humidity: Math.min(humidity, 65),
+            device: {
+                ...device1SensorData,
+                unit: 'celsius'
+            },
+            wine_device: {
+                ...device2SensorData,
+                unit: 'celsius'
+            }
         };
 
         // Update the cache with the new data and timestamp
